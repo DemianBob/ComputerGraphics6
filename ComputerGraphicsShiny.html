@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Система частиц WebGL</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+        }
+        #controls {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            z-index: 10;
+            background: rgba(0,0,0,0.85);
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            backdrop-filter: blur(5px);
+        }
+        button {
+            display: block;
+            width: 200px;
+            margin: 6px 0;
+            padding: 12px 15px;
+            background: #2a2a2a;
+            color: #ccc;
+            border: 1px solid #555;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            text-align: left;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: #3a3a3a;
+            color: #fff;
+            border-color: #888;
+        }
+        button.active {
+            background: #cc5500;
+            border-color: #ff8800;
+            color: #fff;
+            font-weight: bold;
+            box-shadow: 0 0 10px rgba(255, 136, 0, 0.4);
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <button id="btn0" class="active">Бенгальский огонь</button>
+        <button id="btn1">Дым</button>
+        <button id="btn2">Дождь</button>
+        <button id="btn3">Облака / Пар</button>
+        <button id="btn4">Фейерверки</button>
+    </div>
+    <canvas id="c"></canvas>
+
+    <script>
+        const canvas = document.getElementById('c');
+        const gl = canvas.getContext('webgl', {
+            antialias: true,
+            alpha: false
+        });
+        
+        if (!gl) {
+            document.body.innerHTML = '<h1 style="color:white;text-align:center;margin-top:50px;">WebGL не поддерживается</h1>';
+            throw new Error('WebGL не поддерживается');
+        }
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // Вершинный шейдер
+        const vsSource = `
+            precision highp float;
+            
+            attribute vec2 a_position;
+            attribute float a_index;
+            
+            uniform float u_time;
+            uniform float u_type;
+            uniform vec2 u_resolution;
+            
+            varying vec4 v_color;
+            varying float v_alpha;
+            varying float v_dist;
+            
+            float rand(float n) {
+                return fract(sin(n) * 43758.5453123);
+            }
+            
+            void main() {
+                float i = a_index;
+                vec2 pos = vec2(0.0);
+                vec4 col = vec4(1.0);
+                float size = 4.0;
+                float alpha = 1.0;
+                float dist = 0.0;
+                
+                if (u_type == 0.0) {
+                    // ==========================================
+                    // БЕНГАЛЬСКИЙ ОГОНЬ
+                    // Эмиттер: точка в центре экрана
+                    // Частицы разлетаются во все стороны с разной скоростью
+                    // Создают яркие треки с характерным оранжевым свечением
+                    // ==========================================
+                    float seed = i * 137.946;
+                    
+                    // Угол разлета - случайный для каждой частицы
+                    float angle = rand(seed) * 6.28318;
+                    
+                    // Небольшой спиральный сдвиг для реалистичности
+                    float spiralShift = sin(u_time * 3.0 + i * 0.1) * 0.3;
+                    angle += spiralShift;
+                    
+                    // Скорость частицы: от медленных до очень быстрых
+                    float speed = 0.15 + rand(seed + 1.0) * 1.2;
+                    
+                    // Время жизни: циклическое, каждая частица в своей фазе
+                    float life = fract(u_time * 0.6 + rand(seed + 2.0));
+                    
+                    // Радиус разлета
+                    float maxRadius = 0.6 + rand(seed + 5.0) * 0.3;
+                    float r = life * speed;
+                    
+                    // Позиция
+                    pos.x = cos(angle) * r;
+                    pos.y = sin(angle) * r;
+                    
+                    // Добавляем небольшое случайное блуждание
+                    pos.x += sin(u_time * 10.0 + i) * 0.01;
+                    pos.y += cos(u_time * 8.0 + i * 1.3) * 0.01;
+                    
+                    // ЦВЕТ: градиент от ярко-жёлтого/белого в центре к оранжевому/красному на краях
+                    float t = life;
+                    vec3 innerColor = vec3(1.0, 0.95, 0.7);   // яркий жёлто-белый
+                    vec3 midColor   = vec3(1.0, 0.6, 0.1);     // оранжевый
+                    vec3 outerColor = vec3(0.9, 0.2, 0.0);     // тёмно-красный
+                    
+                    if (t < 0.3) {
+                        col.rgb = mix(innerColor, midColor, t / 0.3);
+                    } else if (t < 0.7) {
+                        col.rgb = mix(midColor, outerColor, (t - 0.3) / 0.4);
+                    } else {
+                        col.rgb = outerColor;
+                    }
+                    
+                    // Яркость искр варьируется
+                    float brightness = 0.6 + rand(seed + 3.0) * 0.4;
+                    col.rgb *= brightness;
+                    col.a = 1.0;
+                    
+                    // Размер: меньше к концу жизни
+                    size = (1.5 + rand(seed + 4.0) * 2.5) * (1.0 - t * 0.5);
+                    
+                    // Альфа: затухание к концу жизни
+                    alpha = 1.0 - t * t;
+                    
+                    // Для искр вблизи центра делаем ярче
+                    if (r < 0.1) alpha = 1.0;
+                    
+                    dist = r;
+                }
+                else if (u_type == 1.0) {
+                    // ==========================================
+                    // ДЫМ
+                    // ==========================================
+                    float seed = i * 456.789;
+                    float x = -0.25 + rand(seed) * 0.5;
+                    float life = fract(u_time * 0.18 + rand(seed + 1.0));
+                    float y = -0.85 + life * 1.7;
+                    
+                    pos.x = x + sin(u_time * 1.8 + i * 0.08) * 0.06 * life;
+                    pos.y = y;
+                    
+                    float gray = 0.25 + rand(seed + 2.0) * 0.45;
+                    col = vec4(gray, gray, gray, 1.0);
+                    size = 15.0 + life * 35.0;
+                    alpha = (1.0 - life) * (1.0 - life) * 0.35;
+                }
+                else if (u_type == 2.0) {
+                    // ==========================================
+                    // ДОЖДЬ
+                    // ==========================================
+                    float seed = i * 789.123;
+                    float x = -1.0 + rand(seed) * 2.0;
+                    float speed = 0.6 + rand(seed + 1.0) * 0.6;
+                    float y = 1.1 - fract(u_time * speed + rand(seed + 2.0)) * 2.2;
+                    
+                    pos.x = x;
+                    pos.y = y;
+                    
+                    col = vec4(0.55, 0.75, 0.95, 1.0);
+                    size = 2.0 + rand(seed + 3.0) * 2.0;
+                    alpha = 0.55 + rand(seed + 4.0) * 0.35;
+                }
+                else if (u_type == 3.0) {
+                    // ==========================================
+                    // ОБЛАКА / ПАР
+                    // ==========================================
+                    float seed = i * 234.567;
+                    float x = -1.5 + rand(seed) * 3.0;
+                    float y = 0.25 + rand(seed + 1.0) * 0.55;
+                    
+                    float driftSpeed = 0.015 + rand(seed + 2.0) * 0.04;
+                    x = mod(x + u_time * driftSpeed + 1.5, 3.0) - 1.5;
+                    
+                    pos.x = x;
+                    pos.y = y + sin(u_time * 0.6 + x * 1.8) * 0.04;
+                    
+                    float bright = 0.65 + rand(seed + 3.0) * 0.3;
+                    col = vec4(bright, bright, bright + 0.03, 1.0);
+                    size = 25.0 + rand(seed + 4.0) * 35.0;
+                    alpha = 0.18 + sin(u_time * 0.4 + i) * 0.04;
+                }
+                else if (u_type == 4.0) {
+                    // ==========================================
+                    // ФЕЙЕРВЕРКИ
+                    // ==========================================
+                    float seed = i * 567.890;
+                    float burst = floor(i / 150.0);
+                    float local = mod(i, 150.0) / 150.0;
+                    
+                    float burstTime = fract(u_time * 0.12 + burst * 0.75);
+                    float explodeTime = 0.28;
+                    float life;
+                    
+                    if (burstTime < explodeTime) {
+                        // Подъём снаряда
+                        pos.y = -1.0 + (burstTime / explodeTime) * 1.6;
+                        pos.x = -0.5 + rand(burst * 111.111) * 1.0;
+                        life = 0.0;
+                    } else {
+                        // Взрыв
+                        float explodeLife = (burstTime - explodeTime) / (1.0 - explodeTime);
+                        float angle = local * 6.28318;
+                        float speed = 0.08 + rand(seed) * 0.55;
+                        float grav = 0.25;
+                        
+                        float bx = -0.5 + rand(burst * 111.111) * 1.0;
+                        float by = -0.25 + rand(burst * 222.222) * 0.65;
+                        
+                        pos.x = bx + cos(angle) * speed * explodeLife;
+                        pos.y = by + sin(angle) * speed * explodeLife - grav * explodeLife * explodeLife;
+                        
+                        life = 1.0 - explodeLife;
+                    }
+                    
+                    float colorChoice = rand(seed + 88.888);
+                    vec3 fireColor;
+                    if(colorChoice < 0.2) fireColor = vec3(1.0, 0.15, 0.15);
+                    else if(colorChoice < 0.4) fireColor = vec3(0.15, 1.0, 0.15);
+                    else if(colorChoice < 0.6) fireColor = vec3(0.2, 0.45, 1.0);
+                    else if(colorChoice < 0.8) fireColor = vec3(1.0, 0.75, 0.0);
+                    else fireColor = vec3(1.0, 0.4, 0.9);
+                    
+                    col = vec4(fireColor, 1.0);
+                    size = 2.5 + rand(seed + 10.0) * 3.5;
+                    alpha = life;
+                }
+                
+                gl_Position = vec4(pos.x, pos.y, 0.0, 1.0);
+                gl_PointSize = size * (u_resolution.y / 500.0);
+                v_color = col;
+                v_alpha = alpha;
+                v_dist = dist;
+            }
+        `;
+
+        // Фрагментный шейдер
+        const fsSource = `
+            precision highp float;
+            
+            varying vec4 v_color;
+            varying float v_alpha;
+            varying float v_dist;
+            
+            uniform float u_type;
+            uniform float u_time;
+            
+            void main() {
+                vec2 uv = gl_PointCoord - vec2(0.5);
+                float d = length(uv);
+                
+                vec4 color = v_color;
+                float alpha = v_alpha;
+                
+                if (u_type == 0.0) {
+                    // БЕНГАЛЬСКИЙ ОГОНЬ
+                    // Яркое свечение с мерцанием
+                    float glow = exp(-d * 2.8);
+                    float innerGlow = exp(-d * 6.0);
+                    
+                    // Мерцание искр
+                    float sparkle = sin(d * 18.0 - u_time * 8.0) * 0.25 + 0.75;
+                    float sparkle2 = cos(d * 25.0 + u_time * 12.0) * 0.2 + 0.8;
+                    
+                    alpha *= glow * sparkle * sparkle2;
+                    
+                    // Яркое ядро
+                    alpha += innerGlow * 0.5;
+                    
+                    // Усиливаем яркость
+                    color.rgb *= 1.6;
+                    
+                    // Делаем центр более белым/ярким
+                    if (d < 0.15) {
+                        color.rgb = mix(color.rgb, vec3(1.0, 1.0, 0.95), (0.15 - d) / 0.15 * 0.7);
+                    }
+                }
+                else if (u_type == 1.0) {
+                    // ДЫМ
+                    float falloff = 1.0 - smoothstep(0.0, 0.5, d);
+                    alpha *= falloff * falloff * falloff;
+                }
+                else if (u_type == 2.0) {
+                    // ДОЖДЬ
+                    float shape = 1.0 - smoothstep(0.0, 0.4, abs(uv.y));
+                    shape *= exp(-abs(uv.x) * 12.0);
+                    alpha *= shape;
+                }
+                else if (u_type == 3.0) {
+                    // ОБЛАКА
+                    float fluffy = 1.0 - smoothstep(0.0, 0.5, d);
+                    float noise = sin(d * 12.0 - u_time * 1.5) * 0.4 + 0.6;
+                    alpha *= fluffy * fluffy * noise;
+                }
+                else if (u_type == 4.0) {
+                    // ФЕЙЕРВЕРКИ
+                    float star = exp(-d * 3.5);
+                    float rays = abs(sin(atan(uv.y, uv.x) * 7.0 + u_time * 2.0));
+                    alpha *= star * (0.55 + rays * 0.45);
+                    color.rgb *= 1.9;
+                }
+                
+                if(d > 0.5) discard;
+                
+                gl_FragColor = vec4(color.rgb, alpha);
+            }
+        `;
+
+        // Компиляция шейдеров
+        function createShader(gl, source, type) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Ошибка компиляции шейдера:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        const vertexShader = createShader(gl, vsSource, gl.VERTEX_SHADER);
+        const fragmentShader = createShader(gl, fsSource, gl.FRAGMENT_SHADER);
+        
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+            console.error('Ошибка линковки:', gl.getProgramInfoLog(program));
+            throw new Error('Failed to link program');
+        }
+
+        const aPosition = gl.getAttribLocation(program, 'a_position');
+        const aIndex = gl.getAttribLocation(program, 'a_index');
+        const uTime = gl.getUniformLocation(program, 'u_time');
+        const uType = gl.getUniformLocation(program, 'u_type');
+        const uResolution = gl.getUniformLocation(program, 'u_resolution');
+
+        // Буферы частиц
+        function createBuffers(count) {
+            const positions = new Float32Array(count * 2);
+            const indices = new Float32Array(count);
+            
+            for (let i = 0; i < count; i++) {
+                positions[i * 2] = 0;
+                positions[i * 2 + 1] = 0;
+                indices[i] = i;
+            }
+            
+            const posBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+            
+            const idxBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ARRAY_BUFFER, idxBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+            
+            return { pos: posBuffer, idx: idxBuffer, count: count };
+        }
+
+        let currentType = 0;
+        const particleCounts = [800, 350, 1200, 450, 1500];
+        let buffers = createBuffers(particleCounts[0]);
+
+        function setActiveButton(index) {
+            for (let i = 0; i < 5; i++) {
+                const btn = document.getElementById('btn' + i);
+                btn.classList.toggle('active', i === index);
+            }
+        }
+
+        function switchType(type) {
+            currentType = type;
+            gl.deleteBuffer(buffers.pos);
+            gl.deleteBuffer(buffers.idx);
+            buffers = createBuffers(particleCounts[type]);
+            setActiveButton(type);
+        }
+
+        document.getElementById('btn0').onclick = () => switchType(0);
+        document.getElementById('btn1').onclick = () => switchType(1);
+        document.getElementById('btn2').onclick = () => switchType(2);
+        document.getElementById('btn3').onclick = () => switchType(3);
+        document.getElementById('btn4').onclick = () => switchType(4);
+
+        function render(timestamp) {
+            resize();
+            
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            
+            gl.useProgram(program);
+            gl.enable(gl.BLEND);
+            
+            if (currentType === 0 || currentType === 4) {
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
+            } else {
+                gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+            }
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffers.pos);
+            gl.enableVertexAttribArray(aPosition);
+            gl.vertexAttribPointer(aPosition, 2, gl.FLOAT, false, 0, 0);
+            
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffers.idx);
+            gl.enableVertexAttribArray(aIndex);
+            gl.vertexAttribPointer(aIndex, 1, gl.FLOAT, false, 0, 0);
+            
+            gl.uniform1f(uTime, timestamp * 0.001);
+            gl.uniform1f(uType, currentType);
+            gl.uniform2f(uResolution, canvas.width, canvas.height);
+            
+            gl.drawArrays(gl.POINTS, 0, buffers.count);
+            gl.disable(gl.BLEND);
+            
+            requestAnimationFrame(render);
+        }
+
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
