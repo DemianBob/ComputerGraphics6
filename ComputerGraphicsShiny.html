@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Система частиц WebGL</title>
+    <title>Система частиц WebGL — Фейерверки 4 формы</title>
     <style>
         body {
             margin: 0;
@@ -99,6 +99,7 @@
             varying float v_alpha;
             varying float v_dist;
             varying float v_rand;
+            varying float v_shapeType; // 0-сфера, 1-овал, 2-конус, 3-ромашка
             
             float rand(float n) {
                 return fract(sin(n) * 43758.5453123);
@@ -119,6 +120,7 @@
                 float alpha = 1.0;
                 float dist = 0.0;
                 float randVal = 0.0;
+                float shapeType = 0.0;
                 
                 if (u_type == 0.0) {
                     // БЕНГАЛЬСКИЙ ОГОНЬ
@@ -245,27 +247,64 @@
                     alpha *= 0.6 + edgeX * 0.4;
                 }
                 else if (u_type == 4.0) {
-                    // ФЕЙЕРВЕРКИ
+                    // ФЕЙЕРВЕРКИ (4 формы: сфера, овал, конус, ромашка)
                     float seed = i * 567.890;
                     float burst = floor(i / 150.0);
                     float local = mod(i, 150.0) / 150.0;
                     float burstTime = fract(u_time * 0.12 + burst * 0.75);
                     float explodeTime = 0.28;
+                    
+                    // Определяем форму для данного залпа
+                    shapeType = floor(rand(burst * 333.333) * 4.0);
                     float life;
                     
                     if (burstTime < explodeTime) {
+                        // Фаза полёта вверх
                         pos.y = -1.0 + (burstTime / explodeTime) * 1.6;
                         pos.x = -0.5 + rand(burst * 111.111) * 1.0;
                         life = 0.0;
+                        shapeType = -1.0; // В полёте форма не важна
                     } else {
                         float explodeLife = (burstTime - explodeTime) / (1.0 - explodeTime);
-                        float angle = local * 6.28318;
-                        float speed = 0.08 + rand(seed) * 0.55;
-                        float grav = 0.25;
                         float bx = -0.5 + rand(burst * 111.111) * 1.0;
                         float by = -0.25 + rand(burst * 222.222) * 0.65;
-                        pos.x = bx + cos(angle) * speed * explodeLife;
-                        pos.y = by + sin(angle) * speed * explodeLife - grav * explodeLife * explodeLife;
+                        float angle = local * 6.28318;
+                        
+                        if (shapeType == 0.0) {
+                            // СФЕРА
+                            float speed = 0.12 + rand(seed) * 0.45;
+                            float grav = 0.22;
+                            pos.x = bx + cos(angle) * speed * explodeLife;
+                            pos.y = by + sin(angle) * speed * explodeLife - grav * explodeLife * explodeLife;
+                        } else if (shapeType == 1.0) {
+                            // ОВАЛ (сплюснутая сфера)
+                            float speedX = 0.10 + rand(seed) * 0.50;
+                            float speedY = 0.06 + rand(seed + 0.1) * 0.35;
+                            float grav = 0.15;
+                            pos.x = bx + cos(angle) * speedX * explodeLife;
+                            pos.y = by + sin(angle) * speedY * explodeLife - grav * explodeLife * explodeLife;
+                        } else if (shapeType == 2.0) {
+                            // КОНУС (вверх и в стороны)
+                            float baseAngle = angle;
+                            // Частицы движутся преимущественно вверх и наружу
+                            float coneAngle = (baseAngle - 1.5708) * 0.7 + 1.5708; // Сжимаем к верхней полусфере
+                            float speed = 0.08 + rand(seed) * 0.5;
+                            float grav = 0.1;
+                            pos.x = bx + cos(coneAngle) * speed * explodeLife;
+                            pos.y = by + sin(coneAngle) * speed * explodeLife - grav * explodeLife * explodeLife;
+                        } else {
+                            // РОМАШКА (кластеры по кругу)
+                            float clusterCount = 6.0 + floor(rand(burst * 444.444) * 4.0);
+                            float clusterAngle = floor(local * clusterCount) / clusterCount * 6.28318;
+                            float spread = 0.25;
+                            float offsetAngle = (local * clusterCount - floor(local * clusterCount)) * spread - spread/2.0;
+                            float finalAngle = clusterAngle + offsetAngle;
+                            float speed = 0.1 + rand(seed) * 0.5;
+                            float grav = 0.25;
+                            pos.x = bx + cos(finalAngle) * speed * explodeLife;
+                            pos.y = by + sin(finalAngle) * speed * explodeLife - grav * explodeLife * explodeLife;
+                            shapeType = 3.0;
+                        }
                         life = 1.0 - explodeLife;
                     }
                     
@@ -289,6 +328,7 @@
                 v_alpha = alpha;
                 v_dist = dist;
                 v_rand = randVal;
+                v_shapeType = shapeType;
             }
         `;
 
@@ -300,6 +340,7 @@
             varying float v_alpha;
             varying float v_dist;
             varying float v_rand;
+            varying float v_shapeType;
             
             uniform float u_type;
             uniform float u_time;
@@ -345,11 +386,40 @@
                     alpha *= clumps;
                 }
                 else if (u_type == 4.0) {
-                    // ФЕЙЕРВЕРКИ
+                    // ФЕЙЕРВЕРКИ (разные текстуры для разных форм)
                     float star = exp(-d * 3.5);
-                    float rays = abs(sin(atan(uv.y, uv.x) * 7.0 + u_time * 2.0));
-                    alpha *= star * (0.55 + rays * 0.45);
-                    color.rgb *= 1.9;
+                    float rays = 0.0;
+                    
+                    if (v_shapeType < 0.5) {
+                        // СФЕРА: мягкое свечение
+                        rays = 0.8;
+                        alpha *= star;
+                        color.rgb *= 1.8;
+                    } else if (v_shapeType < 1.5) {
+                        // ОВАЛ: вытянутые лучи по горизонтали
+                        float angle = atan(uv.y, uv.x);
+                        rays = abs(cos(angle * 3.0)) * 0.7 + 0.3;
+                        alpha *= star * rays;
+                        color.rgb *= 1.9;
+                    } else if (v_shapeType < 2.5) {
+                        // КОНУС: острые лучи, больше вверх
+                        float angle = atan(uv.y, uv.x);
+                        // Усиливаем лучи в верхней полусфере
+                        float directional = smoothstep(-0.5, 0.5, uv.y) * 0.6 + 0.4;
+                        rays = abs(sin(angle * 5.0 + u_time * 2.0)) * 0.5 + 0.5;
+                        alpha *= star * rays * directional;
+                        color.rgb *= 2.0;
+                    } else {
+                        // РОМАШКА: четкие лепестки
+                        float angle = atan(uv.y, uv.x);
+                        float petals = abs(cos(angle * 4.0)) * 0.8 + 0.2;
+                        float centerGlow = exp(-d * 8.0);
+                        alpha *= (star * petals * 0.8 + centerGlow * 0.6);
+                        color.rgb *= 1.7;
+                        if (d < 0.12) {
+                            color.rgb = mix(color.rgb, vec3(1.0, 1.0, 0.8), (0.12 - d) / 0.12 * 0.9);
+                        }
+                    }
                 }
                 
                 if(d > 0.5) discard;
